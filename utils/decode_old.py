@@ -1,5 +1,3 @@
-import numpy as np
-import math
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as functional
@@ -11,12 +9,8 @@ def no_peeking_mask(size, device):
     Tạo mask được sử dụng trong decoder để lúc dự đoán trong quá trình huấn luyện
     mô hình không nhìn thấy được các từ ở tương lai
     """
-    np_mask = np.triu(np.ones((1, size, size)),
-k=1).astype('uint8')
-    np_mask =  Variable(torch.from_numpy(np_mask) == 0)
-    np_mask = np_mask.to(device)
-    
-    return np_mask
+    mask = (1 - torch.triu(torch.ones((1, size, size), device=device), diagonal=1)).bool()
+    return mask
 
 def create_masks(src, trg, src_pad, trg_pad, device):
     """ Tạo mask cho encoder, 
@@ -28,8 +22,6 @@ def create_masks(src, trg, src_pad, trg_pad, device):
         trg_mask = (trg != trg_pad).unsqueeze(-2)
         size = trg.size(1) # get seq_len for matrix
         np_mask = no_peeking_mask(size, device)
-        if trg.is_cuda:
-            np_mask.cuda()
         trg_mask = trg_mask & np_mask
         
     else:
@@ -56,7 +48,7 @@ def init_vars(src, model, SRC, TRG, device, k, max_len):
     out = functional.softmax(out, dim=-1)
 
     probs, ix = out[:, -1].data.topk(k)
-    log_scores = torch.Tensor([math.log(prob) for prob in probs.data[0]]).unsqueeze(0)
+    log_scores = torch.log(probs.data[0]).unsqueeze(0)
 
     outputs = torch.zeros(k, max_len).long()
     outputs = outputs.to(device)
@@ -74,7 +66,7 @@ def k_best_outputs(outputs, out, log_scores, i, k):
     # debug print
     
     probs, ix = out[:, -1].data.topk(k)
-    log_probs = torch.Tensor([math.log(p) for p in probs.data.view(-1)]).view(k, -1) + log_scores.transpose(0,1)
+    log_probs = torch.log(probs.data.view(-1)).view(k, -1) + log_scores.transpose(0,1)
     k_probs, k_ix = log_probs.view(-1).topk(k)
 
     row = k_ix // k

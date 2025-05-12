@@ -10,7 +10,7 @@ build_vocab_kwargs: # additional arguments for build_vocab. See torchtext.vocab.
 #  max_size: 50000
   min_freq: 5
 # model parameters section
-device: cuda
+device: cpu
 d_model: 512
 n_layers: 6
 heads: 8
