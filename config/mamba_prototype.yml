@@ -1,7 +1,7 @@
 # data location and config section
 data:
   train_data_location: data/iwslt_en_vi/train2023
-  eval_data_location:  data/iwslt_en_vi/test2023
+  eval_data_location:  data/iwslt_en_vi/dev2023
   src_lang: .lo 
   trg_lang: .vi 
 log_file_models: 'model.log'
@@ -12,8 +12,11 @@ build_vocab_kwargs: # additional arguments for build_vocab. See torchtext.vocab.
 # model parameters section
 device: cpu
 d_model: 512
-n_layers: 6
+n_layers: 8  # Mamba thường hoạt động tốt hơn với nhiều lớp hơn
 heads: 8
+# Mamba specific parameters
+d_state: 16  # Số chiều của state space
+expand_factor: 2  # Hệ số mở rộng cho hidden dimension
 # inference section
 eval_batch_size: 8
 decode_strategy: BeamSearch
@@ -27,14 +30,14 @@ input_max_length: 200 # input longer than this value will be trimmed in inferenc
 max_length: 160 # only perform up to this much timestep during inference
 train_max_length: 50 # training samples with this much length in src/trg will be discarded
 # optimizer and learning arguments section
-lr: 0.2
+lr: 0.1  # Mamba thường sử dụng learning rate thấp hơn
 optimizer: AdamW
 optimizer_params:
   betas:
     - 0.9 # beta1
     - 0.98 # beta2
   eps: !!float 1e-9
-  weight_decay: 0.01 # thêm weight decay cho AdamW
+  weight_decay: 0.01 # weight decay cho AdamW
 n_warmup_steps: 4000
 label_smoothing: 0.1
 dropout: 0.1
@@ -44,4 +47,4 @@ epochs: 20
 printevery: 200
 save_checkpoint_epochs: 1
 maximum_saved_model_eval: 5
-maximum_saved_model_train: 5
+maximum_saved_model_train: 5 
