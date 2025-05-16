@@ -33,7 +33,7 @@ class PositionalEncoder(nn.Module):
     def forward(self, x):
         if(x.shape[1] > self._max_seq_length):
             logging.warn("Input longer than maximum supported length for PE detected. Build a model with a larger input_max_length limit if you want to keep the input; or ignore if you want the input trimmed")
-            x = x[:, x:self._max_seq_length]
+            x = x[:, :self._max_seq_length]
         
         x = x * math.sqrt(self.d_model)
         
@@ -49,6 +49,27 @@ class PositionalEncoder(nn.Module):
         x = self.dropout(x)
         
         return x
+
+def apply_rope(x):
+    """
+    x: Tensor of shape [batch_size, seq_len, heads, d_k]
+    Return: RoPE-applied tensor of the same shape
+    """
+    batch, seq_len, n_heads, d_k = x.shape
+    half = d_k // 2
+    freq_seq = torch.arange(half, device=x.device).float()
+    freq_seq = 10000 ** (-freq_seq / half)
+    pos = torch.arange(seq_len, device=x.device).float()
+    angles = torch.einsum('i,j->ij', pos, freq_seq)
+
+    sin = torch.sin(angles)[None, :, None, :]
+    cos = torch.cos(angles)[None, :, None, :]
+
+    x1 = x[..., :half]
+    x2 = x[..., half:]
+    x_rope = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+    return x_rope
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, heads, d_model, dropout=0.1):
@@ -77,13 +98,18 @@ class MultiHeadAttention(nn.Module):
             The used attention, [batch_size, q_length, k_v_length]
         """
         bs = q.shape[0]
-        q = self.q_linear(q).view(bs, -1, self.h, self.d_k)
-        k = self.k_linear(k).view(bs, -1, self.h, self.d_k)
-        v = self.v_linear(v).view(bs, -1, self.h, self.d_k)
-        
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
+          # Linear projections
+        q = self.q_linear(q).view(bs, -1, self.h, self.d_k).transpose(1, 2)  # [B, H, T, D]
+        k = self.k_linear(k).view(bs, -1, self.h, self.d_k).transpose(1, 2)
+        v = self.v_linear(v).view(bs, -1, self.h, self.d_k).transpose(1, 2)
+
+        # Apply RoPE on Q and K
+        q = apply_rope(q)
+        k = apply_rope(k)
+
+        # q = q.transpose(1, 2)
+        # k = k.transpose(1, 2)
+        # v = v.transpose(1, 2)
         
         value, attn = self.attention(q, k, v, mask, self.dropout)
         concat = value.transpose(1, 2).contiguous().view(bs, -1, self.d_model)
@@ -132,17 +158,33 @@ class Norm(nn.Module):
         / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
         return norm
 
-class FeedForward(nn.Module):
-    """A two-hidden-linear feedforward layer that can activate and dropout its transition state"""
-    def __init__(self, d_model, d_ff=2048, internal_activation=functional.relu, dropout=0.1):
-        super().__init__() 
-        self.linear_1 = nn.Linear(d_model, d_ff)
-        self.dropout = nn.Dropout(dropout)
-        self.linear_2 = nn.Linear(d_ff, d_model)
+# class FeedForward(nn.Module):
+#     """A two-hidden-linear feedforward layer that can activate and dropout its transition state"""
+#     def __init__(self, d_model, d_ff=2048, internal_activation=functional.relu, dropout=0.1):
+#         super().__init__() 
+#         self.linear_1 = nn.Linear(d_model, d_ff)
+#         self.dropout = nn.Dropout(dropout)
+#         self.linear_2 = nn.Linear(d_ff, d_model)
 
-        self.internal_activation = internal_activation
+#         self.internal_activation = internal_activation
     
-    def forward(self, x):
-        x = self.dropout(self.internal_activation(self.linear_1(x)))
-        x = self.linear_2(x)
-        return x
+#     def forward(self, x):
+#         x = self.dropout(self.internal_activation(self.linear_1(x)))
+#         x = self.linear_2(x)
+#         return x
+
+# using SwiGLU
+class FeedForward(nn.Module):
+   """SwiGLU FeedForward layer: Linear -> SwiGLU -> Dropout -> Linear"""
+   def __init__(self, d_model, d_ff=2048, dropout=0.1):
+       super().__init__()
+       self.linear_1 = nn.Linear(d_model, d_ff * 2)  # Tăng gấp đôi cho SwiGLU
+       self.dropout = nn.Dropout(dropout)
+       self.linear_2 = nn.Linear(d_ff, d_model)
+
+   def forward(self, x):
+       x_proj = self.linear_1(x)                      # [B, T, 2*d_ff]
+       x1, x2 = x_proj.chunk(2, dim=-1)               # Tách làm 2 phần
+       x = x1 * functional.silu(x2)                            # SwiGLU
+       x = self.linear_2(self.dropout(x))             # FFN cuối
+       return x
